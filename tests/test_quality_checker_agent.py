@@ -671,6 +671,42 @@ class TestQualityCheckerRunnerParsing:
         # Score 81 >= 70 threshold → APPROVED
         assert report.verdict == "APPROVED"
 
+    def test_parse_output_verdict_follows_score_not_agent_string(self):
+        """A high score must yield APPROVED even if the agent says otherwise.
+
+        Regression: the LLM occasionally emits a valid-but-contradictory
+        ``"verdict": "REVISION_REQUIRED"`` on a report whose dimension scores
+        sum well above the threshold. The verdict must be derived from the
+        authoritative score, not trusted verbatim, so it can never disagree
+        with the score or the workflow router's approve-vs-revise decision.
+        """
+        payload = {**GOOD_QC_PAYLOAD, "verdict": "REVISION_REQUIRED"}
+        report = self.runner._parse_output(
+            raw=_fenced_json(payload),
+            topic=TOPIC,
+            duration=1.0,
+            retry_count=0,
+        )
+        # Score 81 >= 70 threshold → APPROVED, despite the agent's string.
+        assert report.overall_score == 81
+        assert report.revision_required is False
+        assert report.verdict == "APPROVED"
+        assert report.revision_prompt is None
+
+    def test_parse_output_verdict_revision_when_agent_says_approved(self):
+        """A low score must yield REVISION_REQUIRED even if the agent approves."""
+        payload = {**LOW_SCORE_PAYLOAD, "verdict": "APPROVED"}
+        report = self.runner._parse_output(
+            raw=_fenced_json(payload),
+            topic=TOPIC,
+            duration=1.0,
+            retry_count=0,
+        )
+        # Score 29 < 70 threshold → REVISION_REQUIRED, despite the agent's string.
+        assert report.overall_score == 29
+        assert report.revision_required is True
+        assert report.verdict == "REVISION_REQUIRED"
+
     def test_parse_output_top_suggestions_capped_at_five(self):
         payload = {**GOOD_QC_PAYLOAD, "top_suggestions": [f"Suggestion {i}" for i in range(10)]}
         report = self.runner._parse_output(

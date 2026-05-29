@@ -548,10 +548,28 @@ You may include additional commentary before or after the JSON block.
                 for s in d.suggestions
             ][:5]
 
+        # The overall score is the authoritative aggregate of the four dimension
+        # scores, and it (via ``revision_required``) is the same signal the
+        # workflow router uses to decide approve-vs-revise. The LLM sometimes
+        # emits a ``verdict`` string that contradicts its own scores — e.g.
+        # tagging a 96/100 report with all dimensions passing as
+        # REVISION_REQUIRED. Trusting that string verbatim would let the stored
+        # verdict (and the displayed "Quality verdict") disagree with the score
+        # and the routing decision. So we DERIVE the verdict from the
+        # score/threshold and treat the model's stated verdict as advisory only.
         revision_required = overall_score < self._threshold
-        verdict: str = data.get("verdict", "")
-        if verdict not in ("APPROVED", "REVISION_REQUIRED"):
-            verdict = "REVISION_REQUIRED" if revision_required else "APPROVED"
+        verdict: str = "REVISION_REQUIRED" if revision_required else "APPROVED"
+
+        stated_verdict = data.get("verdict", "")
+        if (
+            stated_verdict in ("APPROVED", "REVISION_REQUIRED")
+            and stated_verdict != verdict
+        ):
+            logger.warning(
+                "Agent verdict %r contradicts score %d/%d — using "
+                "score-derived verdict %r",
+                stated_verdict, overall_score, self._threshold, verdict,
+            )
 
         # Build revision prompt
         revision_prompt: str | None = data.get("revision_prompt")

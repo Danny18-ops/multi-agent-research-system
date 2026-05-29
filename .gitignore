@@ -37,3 +37,10 @@ logs/
 *.swo
 Thumbs.db
 .claude
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Runtime database — shouldn't be tracked
+workflow_state.db
