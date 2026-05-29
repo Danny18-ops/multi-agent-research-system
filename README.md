@@ -10,40 +10,39 @@
 flowchart TD
     A([Topic Input]) --> B
 
-    B["🔍 Research Agent\n(web search + page scraping)"]
+    B["🔍 Research Agent<br/>(web search + page scraping)"]
     B -->|raw notes| C
 
-    C["📝 Summarizer Agent\n(extracts key insights)"]
+    C["📝 Summarizer Agent<br/>(extracts key insights)"]
     C -->|structured summary| D
 
-    D["✍️ Report Writer Agent\n(generates Markdown report)"]
+    D["✍️ Report Writer Agent<br/>(generates Markdown report)"]
     D -->|draft report| E
 
-    E{"🔎 Quality Checker Agent\nscore ≥ threshold?"}
+    E{"🔎 Quality Checker Agent<br/>score ≥ threshold?"}
     E -->|Yes| F([Final Report])
-    E -->|"No (max 2 revisions)"| D
+    E -->|"No (max 3 revisions)"| D
 ```
 
 ### Orchestration Backends
 
 | Backend | Description |
 |---------|-------------|
+| **LangGraph** (default) | Directed state machine with a conditional revision loop and live progress |
 | **CrewAI** | Crew of 4 agents running sequentially with shared memory |
-| **LangGraph** | Directed state machine with conditional revision loop |
-| **Both** | Run both backends and compare outputs |
 
 ---
 
 ## Features
 
 - **Autonomous pipeline** — topic in, polished Markdown report out; no human steps required
-- **Self-healing feedback loop** — Quality Checker scores each draft and routes it back to the Report Writer (up to 2 revisions) until the quality threshold is met
-- **Dual orchestration backends** — swap between CrewAI and LangGraph, or run both and diff the outputs
-- **Streaming support** — live intermediate results when using the LangGraph backend (`--stream`)
-- **Pluggable search** — Tavily AI search (recommended) with automatic DuckDuckGo fallback (no key required)
-- **Persistent checkpoints** — LangGraph state is saved to SQLite so long runs survive restarts
-- **Structured reports** — every output includes Executive Summary, Key Findings, Analysis, Conclusions, and References
-- **Rich CLI** — progress spinners, coloured logging, and configurable verbosity via `rich`
+- **Self-correcting feedback loop** — Quality Checker scores each draft and routes it back to the Report Writer (up to 3 revisions by default) until the quality threshold is met
+- **Dual orchestration backends** — swap between LangGraph and CrewAI
+- **Live progress display** — the LangGraph backend streams pipeline progress to the console in real time, automatically (no flag needed)
+- **Pluggable search** — Serper (Google Search API) with automatic DuckDuckGo fallback when no key is set
+- **Persistent checkpoints** — LangGraph state is saved to SQLite so long runs survive restarts (resume with `--thread-id`)
+- **Structured reports** — every output includes an Executive Summary, Background & Context, Key Findings, Analysis & Implications, Conclusions & Recommendations, and References
+- **Rich CLI** — live progress display, coloured output, and configurable verbosity via `rich`
 - **Metadata snapshots** — optional JSON sidecar with run stats, scores, and timing (`--save-metadata`)
 
 ---
@@ -58,7 +57,7 @@ flowchart TD
 | LLM integration | [LangChain](https://github.com/langchain-ai/langchain) | `>=0.3.0` |
 | LLM integration | langchain-openai | `>=0.2.0` |
 | LLM provider | [OpenAI Python SDK](https://github.com/openai/openai-python) | `>=1.40.0` |
-| Web search | [Tavily Python](https://github.com/tavily-ai/tavily-python) | `>=0.3.0` |
+| Web search | Serper (Google Search API) | via `SERPER_API_KEY` |
 | Web search (fallback) | duckduckgo-search | `>=6.0.0` |
 | HTML parsing | BeautifulSoup4 + lxml | `>=4.12.0` / `>=5.0.0` |
 | Settings | Pydantic Settings | `>=2.3.0` |
@@ -102,14 +101,16 @@ cp .env.example .env
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | **Yes** | [OpenAI API key](https://platform.openai.com/api-keys) |
-| `TAVILY_API_KEY` | No | [Tavily search key](https://tavily.com) — falls back to DuckDuckGo if absent |
+| `SERPER_API_KEY` | No | [Serper Google Search key](https://serper.dev) — falls back to DuckDuckGo if absent |
 | `OPENAI_MODEL` | No | Model name (default: `gpt-4o`) |
 | `OPENAI_TEMPERATURE` | No | Sampling temperature (default: `0.1`) |
 | `MAX_SEARCH_RESULTS` | No | Results per query (default: `5`) |
 | `MAX_ITERATIONS` | No | Max agent steps (default: `10`) |
-| `MIN_QUALITY_SCORE` | No | Revision threshold 0–1 (default: `0.7`) |
+| `MIN_QUALITY_SCORE` | No | Revision threshold 0–100 (default: `70`) |
 | `OUTPUT_DIR` | No | Report output directory (default: `outputs`) |
-| `LOG_LEVEL` | No | Logging verbosity (default: `INFO`) |
+| `LOG_LEVEL` | No | Logging verbosity (default: `WARNING`) |
+
+> The CLI flags below override the corresponding environment variables for a single run.
 
 ### 5. Run your first research task
 
@@ -122,40 +123,48 @@ python main.py "The impact of artificial intelligence on drug discovery"
 ## Usage Examples
 
 ```bash
-# Default — CrewAI backend
+# Default run — LangGraph backend with live progress
 python main.py "The impact of artificial intelligence on drug discovery"
 
-# LangGraph backend with live streaming
-python main.py "Quantum computing breakthroughs in 2024" --backend langgraph --stream
+# CrewAI backend instead
+python main.py "Quantum computing breakthroughs in 2024" --backend crewai
 
-# Run both backends and compare outputs
-python main.py "Future of renewable energy" --backend both
+# Raise the quality bar and cap revisions
+python main.py "Future of renewable energy" --quality-threshold 85 --max-revisions 2
 
 # Save a JSON metadata sidecar alongside the report
 python main.py "Blockchain in supply chain" --save-metadata
 
 # Custom output directory and debug logging
 python main.py "CRISPR gene editing" --output-dir ./my-reports --log-level DEBUG
+
+# Resume a previous LangGraph run from its checkpoint
+python main.py "CRISPR gene editing" --thread-id <thread-id-from-previous-run>
 ```
 
 ### CLI Reference
 
 ```
-usage: main.py [-h] [--backend {crewai,langgraph,both}]
-               [--stream] [--output-dir OUTPUT_DIR]
-               [--log-level {DEBUG,INFO,WARNING,ERROR}]
-               [--save-metadata]
-               topic
+usage: research-system [-h] [--backend {langgraph,crewai}] [--model MODEL]
+                       [--quality-threshold N] [--max-revisions N]
+                       [--output-dir OUTPUT_DIR] [--thread-id THREAD_ID]
+                       [--save-metadata] [--no-report-preview]
+                       [--log-level {DEBUG,INFO,WARNING,ERROR}]
+                       topic
 
 positional arguments:
-  topic                 Research topic or question to investigate
+  topic                  Research topic or question to investigate
 
 options:
-  --backend             Orchestration backend (default: crewai)
-  --stream              Stream intermediate results (LangGraph only)
-  --output-dir DIR      Override output directory
-  --log-level LEVEL     Override log verbosity
-  --save-metadata       Save a JSON metadata file alongside the report
+  --backend              Orchestration backend: langgraph (default) or crewai
+  --model MODEL          OpenAI model for all agents (default: gpt-4o)
+  --quality-threshold N  Minimum quality score 0–100 to approve a report (default: 70)
+  --max-revisions N      Maximum revision cycles before forcing output (default: 3)
+  --output-dir DIR       Directory to save the final report (default: outputs/)
+  --thread-id ID         Resume a previous LangGraph run using this checkpoint ID
+  --save-metadata        Save a JSON metadata file alongside the report
+  --no-report-preview    Skip printing the report to the console
+  --log-level LEVEL      Logging verbosity (default: WARNING)
 ```
 
 ---
@@ -171,7 +180,7 @@ multi-agent-research-system/
 │   │   ├── report_writer_agent.py   # Technical report writer
 │   │   └── quality_checker_agent.py # QA editor & fact-checker
 │   ├── tools/
-│   │   ├── search_tools.py          # Tavily + DuckDuckGo search
+│   │   ├── search_tools.py          # Serper + DuckDuckGo search
 │   │   ├── web_scraper.py           # HTML → clean text extractor
 │   │   └── file_tools.py            # Read/write outputs to disk
 │   ├── workflows/
@@ -195,10 +204,9 @@ Reports are saved as Markdown files in `outputs/`:
 
 ```
 outputs/
-├── report_<topic>_<timestamp>.md
-├── crewai_report_<timestamp>.md
-├── langgraph_report_<timestamp>.md
-└── run_metadata_<timestamp>.json    # with --save-metadata
+├── report_<topic>_<timestamp>.md          # LangGraph backend
+├── crewai_report_<topic>_<timestamp>.md   # CrewAI backend
+└── metadata_<timestamp>.json              # with --save-metadata
 ```
 
 Each report contains:
@@ -241,8 +249,8 @@ pytest tests/ -v
 3. Pass the tool instance to the relevant agent's `tools` list.
 
 **Switch search backend**
-- **Tavily** (recommended): set `TAVILY_API_KEY` in `.env`.
-- **DuckDuckGo** (default, no key): leave `TAVILY_API_KEY` blank.
+- **Serper** (recommended): set `SERPER_API_KEY` in `.env`.
+- **DuckDuckGo** (default, no key): leave `SERPER_API_KEY` blank.
 - **Custom**: implement `BaseTool` and inject into `ResearchWorkflow._build_tools()`.
 
 ---
